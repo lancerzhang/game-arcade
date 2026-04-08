@@ -15,13 +15,14 @@
         <p class="eyebrow">Classic Arcade</p>
         <h1>星穹战机</h1>
         <p class="hero-text">
-          现在是同屏双人合作版：两架战机同时升空，轮换多种武器，对抗更复杂的敌军编队，把总分一起推到更高。
+          现在支持单人和同屏双人合作：你可以独自推进，也可以双机协同切换多种武器，对抗更复杂的敌军编队。
         </p>
 
         <div class="info-card">
           <h2>操作方式</h2>
           <p>`P1` 使用 `WASD` 控制蓝翼号。</p>
-          <p>`P2` 使用方向键控制赤焰号。</p>
+          <p>`P2` 使用方向键控制赤焰号，可在开始前切换单人或双人。</p>
+          <p>`P1` 用 `左 Shift`，`P2` 用 `右 Shift` 或 `Enter` 释放大招，未充满时会提示。</p>
           <p>`空格` 开始或重新开始，`P` 暂停。</p>
         </div>
 
@@ -39,6 +40,7 @@
           <p><span class="pill pill-fire">火力</span> 升级当前武器等级</p>
           <p><span class="pill pill-shield">护盾</span> 抵挡一次伤害</p>
           <p><span class="pill pill-heal">修复</span> 回复生命值</p>
+          <p><span class="pill pill-skill">大招</span> 充能满后可发动清场技能</p>
           <p><span class="pill pill-enemy">敌军</span> 侦察机、突击机、截击机、炮塔机、轰炸机、王牌机</p>
         </div>
       </section>
@@ -54,6 +56,10 @@
             <strong id="level">1</strong>
           </div>
           <div class="stat">
+            <span class="stat-label">波次</span>
+            <strong id="wave">1-1</strong>
+          </div>
+          <div class="stat">
             <span class="stat-label">击坠</span>
             <strong id="clears">0</strong>
           </div>
@@ -63,7 +69,7 @@
           </div>
         </div>
 
-        <div class="pilot-grid">
+        <div class="battle-layout">
           <article class="pilot-card pilot-card-p1" id="p1Card">
             <div class="pilot-head">
               <span class="pilot-badge">P1</span>
@@ -73,8 +79,41 @@
             <p class="pilot-line">武器 <span id="p1Weapon">脉冲</span></p>
             <p class="pilot-line">火力 <span id="p1Power">Lv.1</span></p>
             <p class="pilot-line">护盾 <span id="p1Shield">0</span></p>
+            <p class="pilot-line">大招 <span id="p1Skill">0%</span></p>
+            <p class="pilot-line">按键 <span id="p1SkillKey">L-Shift</span></p>
             <p class="pilot-line">状态 <span id="p1Status">作战中</span></p>
           </article>
+
+          <div class="canvas-frame">
+            <canvas id="gameCanvas" width="480" height="800" aria-label="飞机大战游戏画布"></canvas>
+
+            <div class="boss-hud" id="bossHud">
+              <div class="boss-copy">
+                <span class="boss-kicker">Boss Warning</span>
+                <strong id="bossName">深空母舰</strong>
+              </div>
+              <div class="boss-bar">
+                <div class="boss-bar-fill" id="bossHealthFill"></div>
+              </div>
+            </div>
+
+            <div class="overlay visible" id="overlay">
+              <div class="overlay-card">
+                <p class="overlay-kicker" id="overlayKicker">双人出击</p>
+                <h2 id="overlayTitle">双机协同空战</h2>
+                <p id="overlayText">
+                  两位玩家同时推进战线，吃补给切武器、升火力、攒大招，在越来越密集的敌军与 Boss 压力下活下来。
+                </p>
+                <div class="mode-picker" id="modePicker">
+                  <button class="mode-button is-active" id="singleModeButton" type="button">单人模式</button>
+                  <button class="mode-button" id="coopModeButton" type="button">双人模式</button>
+                </div>
+                <button id="primaryButton" type="button">开始任务</button>
+              </div>
+            </div>
+
+            <div class="status-banner" id="statusBanner">双机编队已升空</div>
+          </div>
 
           <article class="pilot-card pilot-card-p2" id="p2Card">
             <div class="pilot-head">
@@ -82,28 +121,13 @@
               <strong>赤焰号</strong>
             </div>
             <p class="pilot-line">生命 <span id="p2Lives">3</span></p>
-            <p class="pilot-line">武器 <span id="p2Weapon">散射</span></p>
+            <p class="pilot-line">武器 <span id="p2Weapon">脉冲</span></p>
             <p class="pilot-line">火力 <span id="p2Power">Lv.1</span></p>
             <p class="pilot-line">护盾 <span id="p2Shield">0</span></p>
-            <p class="pilot-line">状态 <span id="p2Status">作战中</span></p>
+            <p class="pilot-line">大招 <span id="p2Skill">0%</span></p>
+            <p class="pilot-line">按键 <span id="p2SkillKey">R-Shift / Enter</span></p>
+            <p class="pilot-line">状态 <span id="p2Status">待命</span></p>
           </article>
-        </div>
-
-        <div class="canvas-frame">
-          <canvas id="gameCanvas" width="480" height="800" aria-label="飞机大战游戏画布"></canvas>
-
-          <div class="overlay visible" id="overlay">
-            <div class="overlay-card">
-              <p class="overlay-kicker" id="overlayKicker">双人出击</p>
-              <h2 id="overlayTitle">双机协同空战</h2>
-              <p id="overlayText">
-                两位玩家同时推进战线，吃补给切武器、升火力，在越来越密集的敌军里活下来。
-              </p>
-              <button id="primaryButton" type="button">开始任务</button>
-            </div>
-          </div>
-
-          <div class="status-banner" id="statusBanner">双机编队已升空</div>
         </div>
       </section>
     </main>

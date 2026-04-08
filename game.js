@@ -4,12 +4,16 @@ const ctx = canvas.getContext("2d");
 const ui = {
   score: document.getElementById("score"),
   level: document.getElementById("level"),
+  wave: document.getElementById("wave"),
   clears: document.getElementById("clears"),
   highScore: document.getElementById("highScore"),
   overlay: document.getElementById("overlay"),
   overlayKicker: document.getElementById("overlayKicker"),
   overlayTitle: document.getElementById("overlayTitle"),
   overlayText: document.getElementById("overlayText"),
+  modePicker: document.getElementById("modePicker"),
+  singleModeButton: document.getElementById("singleModeButton"),
+  coopModeButton: document.getElementById("coopModeButton"),
   primaryButton: document.getElementById("primaryButton"),
   statusBanner: document.getElementById("statusBanner"),
   p1Card: document.getElementById("p1Card"),
@@ -17,13 +21,20 @@ const ui = {
   p1Weapon: document.getElementById("p1Weapon"),
   p1Power: document.getElementById("p1Power"),
   p1Shield: document.getElementById("p1Shield"),
+  p1Skill: document.getElementById("p1Skill"),
+  p1SkillKey: document.getElementById("p1SkillKey"),
   p1Status: document.getElementById("p1Status"),
   p2Card: document.getElementById("p2Card"),
   p2Lives: document.getElementById("p2Lives"),
   p2Weapon: document.getElementById("p2Weapon"),
   p2Power: document.getElementById("p2Power"),
   p2Shield: document.getElementById("p2Shield"),
+  p2Skill: document.getElementById("p2Skill"),
+  p2SkillKey: document.getElementById("p2SkillKey"),
   p2Status: document.getElementById("p2Status"),
+  bossHud: document.getElementById("bossHud"),
+  bossName: document.getElementById("bossName"),
+  bossHealthFill: document.getElementById("bossHealthFill"),
 };
 
 const WORLD = {
@@ -43,21 +54,29 @@ let particles = [];
 let floatingTexts = [];
 let lastTime = 0;
 let bannerTimer = 0;
-let scoreSinceLevel = 0;
 let nextEnemyId = 1;
 
 const state = {
   running: false,
   paused: false,
   gameOver: false,
+  mode: "single",
   score: 0,
   level: 1,
+  wave: 0,
   clears: 0,
   highScore: Number(localStorage.getItem("plane-war-high-score") || 0),
   flash: 0,
   flashColor: "#ff6b87",
-  enemySpawn: 0.7,
   powerSpawn: 10,
+  encounterPhase: "idle",
+  encounterTimer: 0,
+  wavePlan: [],
+  waveCursor: 0,
+  waveSpawnTimer: 0,
+  nextEncounter: "wave",
+  bossId: null,
+  bossKills: 0,
 };
 
 const WEAPONS = {
@@ -290,6 +309,9 @@ const players = [
     accent: "#7ef9ff",
     hull: "#5caeff",
     controls: { left: "KeyA", right: "KeyD", up: "KeyW", down: "KeyS" },
+    skillKeys: ["ShiftLeft"],
+    skillKeyLabel: "L-Shift",
+    skillName: "星流风暴",
     startX: WORLD.width * 0.34,
     startWeapon: "pulse",
   }),
@@ -300,8 +322,11 @@ const players = [
     accent: "#ff9ab2",
     hull: "#ffbf63",
     controls: { left: "ArrowLeft", right: "ArrowRight", up: "ArrowUp", down: "ArrowDown" },
+    skillKeys: ["ShiftRight", "Enter", "NumpadEnter"],
+    skillKeyLabel: "R-Shift / Enter",
+    skillName: "赤焰天降",
     startX: WORLD.width * 0.66,
-    startWeapon: "spread",
+    startWeapon: "pulse",
   }),
 ];
 
@@ -322,8 +347,12 @@ function createPlayer(config) {
     weaponType: config.startWeapon,
     lives: 3,
     alive: true,
+    enabled: true,
     respawnTimer: 0,
     kills: 0,
+    skillCharge: 0,
+    skillActive: 0,
+    skillPulse: 0,
   };
 }
 
@@ -333,10 +362,6 @@ function clamp(value, min, max) {
 
 function randomRange(min, max) {
   return min + Math.random() * (max - min);
-}
-
-function getLevelThreshold(level) {
-  return 1400 + (level - 1) * 950;
 }
 
 function chooseWeighted(entries) {
@@ -361,16 +386,58 @@ function initStars() {
   }));
 }
 
+function enabledPlayers() {
+  return players.filter((player) => player.enabled);
+}
+
 function livingPlayers() {
-  return players.filter((player) => player.alive);
+  return players.filter((player) => player.enabled && player.alive);
 }
 
 function allPilotsOut() {
-  return players.every((player) => !player.alive && player.lives <= 0 && player.respawnTimer <= 0);
+  return enabledPlayers().every(
+    (player) => !player.alive && player.lives <= 0 && player.respawnTimer <= 0
+  );
+}
+
+function applyModeToPlayers() {
+  const singleMode = state.mode === "single";
+  players[0].enabled = true;
+  players[0].startX = singleMode ? WORLD.width / 2 : WORLD.width * 0.34;
+  players[1].enabled = !singleMode;
+  players[1].startX = WORLD.width * 0.66;
+}
+
+function setGameActive(active) {
+  document.body.classList.toggle("game-active", active);
+}
+
+function setMode(mode) {
+  state.mode = mode === "coop" ? "coop" : "single";
+  applyModeToPlayers();
+  document.body.classList.toggle("single-mode", state.mode === "single");
+  document.body.classList.toggle("coop-mode", state.mode === "coop");
+  ui.singleModeButton.classList.toggle("is-active", state.mode === "single");
+  ui.coopModeButton.classList.toggle("is-active", state.mode === "coop");
+  ui.primaryButton.textContent = state.mode === "single" ? "开始单人任务" : "开始双人任务";
+
+  if (!state.running || state.gameOver) {
+    ui.overlayKicker.textContent = state.mode === "single" ? "单人出击" : "双人出击";
+    ui.overlayTitle.textContent = state.mode === "single" ? "单机突围战" : "双机协同空战";
+    ui.overlayText.textContent =
+      state.mode === "single"
+        ? "使用 P1 独自推进波次和 Boss 战，按左 Shift 或任意 Shift 释放大招。"
+        : "两位玩家同时推进战线，吃补给切武器、升火力、攒大招，在越来越密集的敌军与 Boss 压力下活下来。";
+  }
+
+  updateHud();
 }
 
 function setOverlay(visible, options = {}) {
   ui.overlay.classList.toggle("visible", visible);
+  if (Object.prototype.hasOwnProperty.call(options, "showModePicker")) {
+    ui.modePicker.classList.toggle("hidden", !options.showModePicker);
+  }
   if (options.kicker) {
     ui.overlayKicker.textContent = options.kicker;
   }
@@ -404,17 +471,26 @@ function resetPlayer(player, resetWeapon = false) {
 }
 
 function resetGame() {
+  applyModeToPlayers();
+  setGameActive(true);
   state.running = true;
   state.paused = false;
   state.gameOver = false;
   state.score = 0;
   state.level = 1;
+  state.wave = 0;
   state.clears = 0;
   state.flash = 0;
   state.flashColor = "#ff6b87";
-  state.enemySpawn = 0.75;
   state.powerSpawn = 8.5;
-  scoreSinceLevel = 0;
+  state.encounterPhase = "idle";
+  state.encounterTimer = 0;
+  state.wavePlan = [];
+  state.waveCursor = 0;
+  state.waveSpawnTimer = 0;
+  state.nextEncounter = "wave";
+  state.bossId = null;
+  state.bossKills = 0;
   nextEnemyId = 1;
 
   playerBullets = [];
@@ -425,58 +501,486 @@ function resetGame() {
   floatingTexts = [];
 
   for (const player of players) {
+    if (!player.enabled) {
+      player.alive = false;
+      player.lives = 0;
+      player.shield = 0;
+      player.skillCharge = 0;
+      player.skillActive = 0;
+      player.skillPulse = 0;
+      player.weaponType = player.startWeapon;
+      player.fireLevel = 1;
+      player.respawnTimer = 0;
+      continue;
+    }
     player.lives = 3;
     player.shield = 0;
     player.fireLevel = 1;
     player.weaponType = player.startWeapon;
     player.kills = 0;
+    player.skillCharge = 0;
+    player.skillActive = 0;
+    player.skillPulse = 0;
     resetPlayer(player, false);
     player.hitCooldown = 0.95;
     player.shield = 1;
   }
 
+  queueNextWave(1.25);
   updateHud();
-  setOverlay(false);
-  flashMessage("双机编队已升空");
+  setOverlay(false, { showModePicker: true });
+  flashMessage(state.mode === "single" ? "单机任务开始" : "双机编队已升空");
 }
 
 function addScore(amount) {
   state.score += amount;
-  scoreSinceLevel += amount;
   if (state.score > state.highScore) {
     state.highScore = state.score;
     localStorage.setItem("plane-war-high-score", String(state.highScore));
-  }
-
-  while (scoreSinceLevel >= getLevelThreshold(state.level)) {
-    scoreSinceLevel -= getLevelThreshold(state.level);
-    state.level += 1;
-    flashMessage(`威胁等级提升至 Lv.${state.level}`);
   }
 }
 
 function updateHud() {
   ui.score.textContent = String(state.score);
   ui.level.textContent = String(state.level);
+  ui.wave.textContent =
+    state.encounterPhase === "boss" || state.encounterPhase === "bossIntro"
+      ? `Boss ${state.level}`
+      : `${state.level}-${Math.max(1, state.wave)}`;
   ui.clears.textContent = String(state.clears);
   ui.highScore.textContent = String(state.highScore);
 
   for (const player of players) {
     const prefix = player.id;
-    const status = player.alive
-      ? "作战中"
+    const status = !player.enabled
+      ? "未启用"
+      : player.alive
+      ? player.skillActive > 0
+        ? "大招释放中"
+        : "作战中"
       : player.lives > 0
         ? `返场 ${Math.max(0, player.respawnTimer).toFixed(1)}s`
         : "离场";
 
-    ui[`${prefix}Lives`].textContent = String(player.lives);
-    ui[`${prefix}Weapon`].textContent = WEAPONS[player.weaponType].label;
-    ui[`${prefix}Power`].textContent = `Lv.${player.fireLevel}`;
-    ui[`${prefix}Shield`].textContent = String(player.shield);
+    ui[`${prefix}Lives`].textContent = player.enabled ? String(player.lives) : "--";
+    ui[`${prefix}Weapon`].textContent = player.enabled ? WEAPONS[player.weaponType].label : "--";
+    ui[`${prefix}Power`].textContent = player.enabled ? `Lv.${player.fireLevel}` : "--";
+    ui[`${prefix}Shield`].textContent = player.enabled ? String(player.shield) : "--";
+    ui[`${prefix}Skill`].textContent =
+      player.enabled ? (player.skillCharge >= 100 ? "就绪" : `${Math.floor(player.skillCharge)}%`) : "--";
+    ui[`${prefix}SkillKey`].textContent = player.enabled ? player.skillKeyLabel : "--";
     ui[`${prefix}Status`].textContent = status;
     ui[`${prefix}Card`].classList.toggle("pilot-card-down", !player.alive);
     ui[`${prefix}Card`].classList.toggle("pilot-card-out", !player.alive && player.lives <= 0);
+    ui[`${prefix}Card`].classList.toggle("pilot-card-disabled", !player.enabled);
   }
+
+  const boss = state.running ? getBoss() : null;
+  ui.bossHud.classList.toggle("visible", Boolean(boss));
+  if (boss) {
+    ui.bossName.textContent = boss.name;
+    ui.bossHealthFill.style.width = `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%`;
+  }
+}
+
+function getBoss() {
+  return enemies.find((enemy) => enemy.isBoss && !enemy.dead) || null;
+}
+
+function countActiveRegularEnemies() {
+  return enemies.filter((enemy) => !enemy.dead && !enemy.isBoss).length;
+}
+
+function createWaveGroup(type, count, delay, options = {}) {
+  return {
+    type,
+    count,
+    delay,
+    center: options.center ?? WORLD.width / 2,
+    spacing: options.spacing ?? 56,
+    jitter: options.jitter ?? 8,
+    pattern: options.pattern ?? "line",
+    yStep: options.yStep ?? 28,
+  };
+}
+
+function buildWavePlan(level, wave) {
+  const extra = Math.min(2, Math.floor((level - 1) / 2));
+  const center = WORLD.width / 2;
+
+  if (wave === 1) {
+    return [
+      createWaveGroup("scout", 3 + extra, 0.65, { center: 120, spacing: 48, pattern: "vee" }),
+      createWaveGroup("scout", 3 + extra, 0.75, { center: 360, spacing: 48, pattern: "vee" }),
+      createWaveGroup("striker", 2, 1.05, { center, spacing: 122 }),
+      createWaveGroup("scout", 4 + extra, 0.85, { center, spacing: 52, pattern: "stagger" }),
+      createWaveGroup("striker", 3, 0.9, { center, spacing: 76 }),
+    ];
+  }
+
+  if (wave === 2) {
+    return [
+      createWaveGroup("interceptor", 2, 0.55, { center: 96, spacing: 82 }),
+      createWaveGroup("interceptor", 0, 0.6, { center }),
+      createWaveGroup("interceptor", 2, 0.9, { center: 384, spacing: 82 }),
+      createWaveGroup(level >= 3 ? "turret" : "striker", level >= 3 ? 2 : 3, 1.0, {
+        center,
+        spacing: 130,
+      }),
+      createWaveGroup("scout", 5 + extra, 0.8, { center, spacing: 50, pattern: "line" }),
+      createWaveGroup("interceptor", 3, 0.95, { center, spacing: 84, pattern: "vee" }),
+    ].filter((group) => group.count > 0);
+  }
+
+  return [
+    createWaveGroup("turret", 2, 0.75, { center, spacing: 160 }),
+    createWaveGroup("bomber", 1 + (level >= 3 ? 1 : 0), 1.05, { center, spacing: 160 }),
+    createWaveGroup("interceptor", 3, 0.65, { center, spacing: 86, pattern: "vee" }),
+    createWaveGroup("striker", 4, 0.72, { center, spacing: 68, pattern: "line" }),
+    createWaveGroup("scout", 5 + extra, 0.5, { center, spacing: 52, pattern: "stagger" }),
+    createWaveGroup(level >= 4 ? "bomber" : "turret", 1, 0.9, { center: randomRange(130, 350) }),
+  ];
+}
+
+function queueNextWave(delay = 1.6) {
+  state.wave += 1;
+  state.encounterPhase = "waveIntro";
+  state.encounterTimer = delay;
+  state.nextEncounter = "wave";
+  state.wavePlan = buildWavePlan(state.level, state.wave);
+  state.waveCursor = 0;
+  state.waveSpawnTimer = 0.25;
+  flashMessage(`第 ${state.level}-${state.wave} 波来袭`, 1.6);
+}
+
+function queueBoss(delay = 2.1) {
+  state.encounterPhase = "bossIntro";
+  state.encounterTimer = delay;
+  state.nextEncounter = "boss";
+  flashMessage(`Boss 接近，章节 ${state.level} 即将决战`, 1.9);
+}
+
+function spawnFormation(group) {
+  if (!group || group.count <= 0) {
+    return;
+  }
+
+  for (let index = 0; index < group.count; index += 1) {
+    const centered = index - (group.count - 1) / 2;
+    let x = group.center + centered * group.spacing;
+    let yOffset = index * group.yStep;
+
+    if (group.pattern === "vee") {
+      yOffset = Math.abs(centered) * group.yStep;
+    } else if (group.pattern === "stagger") {
+      yOffset = index * (group.yStep + 8);
+      x += index % 2 === 0 ? -22 : 22;
+    }
+
+    x += randomRange(-group.jitter, group.jitter);
+    const enemy = createEnemy(group.type, clamp(x, 40, WORLD.width - 40));
+    enemy.y -= yOffset;
+    enemy.phase += index * 0.65;
+    enemies.push(enemy);
+  }
+}
+
+function createBoss(chapter) {
+  const maxHp = 150 + chapter * 64;
+  return {
+    id: nextEnemyId++,
+    type: "boss",
+    name: `深空母舰 ${chapter}`,
+    x: WORLD.width / 2,
+    y: -120,
+    width: 154,
+    height: 112,
+    hp: maxHp,
+    maxHp,
+    speed: 108 + chapter * 4,
+    score: 1800 + chapter * 260,
+    color: "#ff8d7b",
+    drift: 84,
+    shooter: true,
+    shootTimer: 0.9,
+    summonTimer: 4.8,
+    bossPhase: 1,
+    attackIndex: 0,
+    hoverY: 124,
+    dashDir: 1,
+    age: 0,
+    phase: Math.random() * Math.PI * 2,
+    phaseClock: Math.random() * Math.PI * 2,
+    isBoss: true,
+  };
+}
+
+function spawnBoss() {
+  const boss = createBoss(state.level);
+  enemies.push(boss);
+  state.bossId = boss.id;
+  state.encounterPhase = "boss";
+  flashMessage(`${boss.name} 进入战场`, 2);
+  fireBossWeapon(boss);
+}
+
+function fireRadialPattern(x, y, count, speed, color, radius = 4, startAngle = 0) {
+  for (let index = 0; index < count; index += 1) {
+    const angle = startAngle + (Math.PI * 2 * index) / count;
+    spawnEnemyBullet(x, y, {
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      radius,
+      color,
+    });
+  }
+}
+
+function clearEnemyBullets(limit = Number.POSITIVE_INFINITY) {
+  let removed = 0;
+  enemyBullets = enemyBullets.filter((bullet) => {
+    if (removed >= limit) {
+      return true;
+    }
+    removed += 1;
+    spawnExplosion(bullet.x, bullet.y, bullet.color, 3);
+    return false;
+  });
+}
+
+function updateBossPhase(enemy) {
+  const ratio = enemy.hp / enemy.maxHp;
+  const nextPhase = ratio <= 0.33 ? 3 : ratio <= 0.66 ? 2 : 1;
+  if (nextPhase === enemy.bossPhase) {
+    return;
+  }
+
+  enemy.bossPhase = nextPhase;
+  enemy.shootTimer = 0.5;
+  enemy.summonTimer = 1.2;
+  clearEnemyBullets(999);
+  flashMessage(`${enemy.name} 进入 ${["一", "二", "三"][nextPhase - 1]}阶段`, 1.8);
+  spawnExplosion(enemy.x, enemy.y, "#ffd08b", 28);
+}
+
+function spawnBossEscort(enemy, type, count) {
+  for (let index = 0; index < count; index += 1) {
+    const offset = (index - (count - 1) / 2) * 86;
+    const escort = createEnemy(type, clamp(enemy.x + offset, 48, WORLD.width - 48));
+    escort.y = enemy.y + 8 + index * 10;
+    escort.phase += index * 0.8;
+    enemies.push(escort);
+  }
+}
+
+function fireBossWeapon(enemy) {
+  enemy.attackIndex += 1;
+
+  if (enemy.bossPhase === 1) {
+    if (enemy.attackIndex % 2 === 0) {
+      fireAimedPattern(enemy, 5, 0.42, 310 + state.level * 10, "#ffc179", 4.4);
+    } else {
+      fireFanPattern(enemy, 7, 1.16, 248 + state.level * 6, "#ff8a72", 4.2);
+    }
+    return;
+  }
+
+  if (enemy.bossPhase === 2) {
+    if (enemy.attackIndex % 3 === 0) {
+      fireRadialPattern(enemy.x, enemy.y + 10, 10, 180, "#ffe07a", 4.2, enemy.phaseClock);
+    } else if (enemy.attackIndex % 3 === 1) {
+      fireAimedPattern(enemy, 6, 0.52, 328 + state.level * 11, "#ffe07a", 4.4);
+      spawnBossEscort(enemy, "interceptor", 2);
+    } else {
+      fireFanPattern(enemy, 8, 1.3, 264 + state.level * 8, "#ff8a72", 4.4);
+      spawnEnemyBullet(enemy.x, enemy.y + enemy.height / 2 - 2, {
+        vx: 0,
+        vy: 228 + state.level * 8,
+        radius: 8,
+        color: "#ff865d",
+        gravity: 42,
+        kind: "bomb",
+      });
+    }
+    return;
+  }
+
+  if (enemy.attackIndex % 3 === 0) {
+    fireRadialPattern(enemy.x, enemy.y + 10, 14, 194, "#fff1a0", 4.4, enemy.phaseClock);
+    spawnBossEscort(enemy, "striker", 2);
+  } else if (enemy.attackIndex % 3 === 1) {
+    fireAimedPattern(enemy, 7, 0.6, 345 + state.level * 12, "#ffd36d", 4.6);
+    fireFanPattern(enemy, 9, 1.44, 275 + state.level * 8, "#ff8964", 4.1);
+  } else {
+    fireFanPattern(enemy, 10, 1.55, 286 + state.level * 8, "#ff8964", 4.4);
+    spawnEnemyBullet(enemy.x - 36, enemy.y + enemy.height / 2 - 2, {
+      vx: -30,
+      vy: 234 + state.level * 8,
+      radius: 7,
+      color: "#ff865d",
+      gravity: 38,
+      kind: "bomb",
+    });
+    spawnEnemyBullet(enemy.x + 36, enemy.y + enemy.height / 2 - 2, {
+      vx: 30,
+      vy: 234 + state.level * 8,
+      radius: 7,
+      color: "#ff865d",
+      gravity: 38,
+      kind: "bomb",
+    });
+  }
+}
+
+function updateEncounter(delta) {
+  if (state.encounterPhase === "waveIntro" || state.encounterPhase === "bossIntro") {
+    state.encounterTimer -= delta;
+    if (state.encounterTimer <= 0) {
+      if (state.nextEncounter === "boss") {
+        spawnBoss();
+      } else {
+        state.encounterPhase = "wave";
+      }
+    }
+  }
+
+  if (state.encounterPhase === "wave") {
+    if (state.waveCursor < state.wavePlan.length) {
+      state.waveSpawnTimer -= delta;
+      if (state.waveSpawnTimer <= 0) {
+        const group = state.wavePlan[state.waveCursor];
+        spawnFormation(group);
+        state.waveCursor += 1;
+        state.waveSpawnTimer = group.delay;
+      }
+    } else if (countActiveRegularEnemies() === 0) {
+      if (state.wave >= 3) {
+        queueBoss(2.15);
+      } else {
+        queueNextWave(1.7);
+      }
+    }
+  }
+}
+
+function getNearestEnemies(x, y, count) {
+  return enemies
+    .filter((enemy) => !enemy.dead)
+    .sort((left, right) => {
+      const leftDistance = (left.x - x) ** 2 + (left.y - y) ** 2;
+      const rightDistance = (right.x - x) ** 2 + (right.y - y) ** 2;
+      return leftDistance - rightDistance;
+    })
+    .slice(0, count);
+}
+
+function grantSkillCharge(player, amount) {
+  if (!player.enabled) {
+    return;
+  }
+  player.skillCharge = clamp(player.skillCharge + amount, 0, 100);
+}
+
+function activateSkill(player) {
+  if (!player || !player.enabled) {
+    return false;
+  }
+
+  if (!state.running) {
+    flashMessage("战斗还没开始", 1);
+    return false;
+  }
+
+  if (state.paused) {
+    flashMessage("暂停中无法释放大招", 1);
+    return false;
+  }
+
+  if (!player.alive) {
+    flashMessage(`${player.label} 当前无法释放大招`, 1.1);
+    return false;
+  }
+
+  if (player.skillActive > 0) {
+    flashMessage(`${player.label} 的大招仍在持续`, 1);
+    return false;
+  }
+
+  if (player.skillCharge < 100) {
+    flashMessage(`${player.label} 大招充能未满`, 1.2);
+    return false;
+  }
+
+  player.skillCharge = 0;
+  player.skillActive = player.id === "p1" ? 2.8 : 2.5;
+  player.skillPulse = 0;
+  player.hitCooldown = Math.max(player.hitCooldown, 0.8);
+  player.shield = Math.max(player.shield, 1);
+  clearEnemyBullets(player.id === "p1" ? 18 : 26);
+  flashMessage(`${player.label} 释放大招：${player.skillName}`, 1.8);
+  spawnExplosion(player.x, player.y, player.accent, 22);
+  updateHud();
+  return true;
+}
+
+function damageEnemy(enemy, amount, ownerId, color = null, burstCount = 5) {
+  if (!enemy || enemy.dead) {
+    return false;
+  }
+
+  enemy.hp -= amount;
+  if (color) {
+    spawnExplosion(enemy.x, enemy.y, color, burstCount);
+  }
+
+  if (enemy.isBoss && enemy.hp > 0) {
+    updateBossPhase(enemy);
+  }
+
+  if (enemy.hp <= 0) {
+    destroyEnemy(enemy, ownerId);
+    return true;
+  }
+
+  return false;
+}
+
+function triggerSkillPulse(player) {
+  if (player.id === "p1") {
+    const targets = getNearestEnemies(player.x, player.y - 120, 4);
+    if (targets.length === 0) {
+      return;
+    }
+
+    for (const target of targets) {
+      spawnExplosion(target.x, target.y, player.accent, 6);
+      damageEnemy(target, 3 + player.fireLevel * 0.55, player.id, player.accent, 4);
+    }
+    clearEnemyBullets(6);
+    return;
+  }
+
+  const targets = enemies
+    .filter((enemy) => !enemy.dead)
+    .sort((left, right) => left.y - right.y)
+    .slice(0, 2);
+
+  for (const target of targets) {
+    spawnExplosion(target.x, target.y, "#ff9c6a", 10);
+    for (const enemy of enemies) {
+      if (enemy.dead) {
+        continue;
+      }
+      const dx = enemy.x - target.x;
+      const dy = enemy.y - target.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= 90) {
+        const damage = enemy.id === target.id ? 4.6 + player.fireLevel * 0.6 : 2.3;
+        damageEnemy(enemy, damage, player.id, "#ffb87a", 3);
+      }
+    }
+  }
+  clearEnemyBullets(8);
 }
 
 function spawnPlayerBullet(player, options) {
@@ -499,26 +1003,6 @@ function spawnPlayerBullet(player, options) {
     phase: options.phase || 0,
     hitIds: new Set(),
   });
-}
-
-function getEnemyPool() {
-  const pool = [
-    { type: "scout", weight: state.level < 3 ? 38 : 22 },
-    { type: "striker", weight: 26 },
-  ];
-  if (state.level >= 2) {
-    pool.push({ type: "interceptor", weight: 20 });
-  }
-  if (state.level >= 3) {
-    pool.push({ type: "turret", weight: 16 });
-  }
-  if (state.level >= 4) {
-    pool.push({ type: "bomber", weight: 11 });
-  }
-  if (state.level >= 5) {
-    pool.push({ type: "ace", weight: 7 + Math.min(7, state.level - 5) });
-  }
-  return pool;
 }
 
 function createEnemy(type, forcedX) {
@@ -545,22 +1029,6 @@ function createEnemy(type, forcedX) {
     dashDir: Math.random() > 0.5 ? 1 : -1,
     hoverY: randomRange(120, 260),
   };
-}
-
-function spawnEnemyWave() {
-  const type = chooseWeighted(getEnemyPool());
-  const count =
-    type === "scout"
-      ? 1 + (Math.random() > 0.45 ? 1 : 0) + (state.level >= 5 && Math.random() > 0.7 ? 1 : 0)
-      : type === "interceptor" && state.level >= 4 && Math.random() > 0.6
-        ? 2
-        : 1;
-
-  const center = randomRange(80, WORLD.width - 80);
-  for (let index = 0; index < count; index += 1) {
-    const offset = (index - (count - 1) / 2) * 58;
-    enemies.push(createEnemy(type, clamp(center + offset, 40, WORLD.width - 40)));
-  }
 }
 
 function getEnemyCooldown(type) {
@@ -770,7 +1238,7 @@ function setScreenFlash(color, amount) {
 }
 
 function takeDamage(player) {
-  if (!player.alive || player.hitCooldown > 0) {
+  if (!player.enabled || !player.alive || player.hitCooldown > 0 || player.skillActive > 0) {
     return;
   }
 
@@ -810,6 +1278,9 @@ function pickDifferentWeapon(currentWeapon) {
 }
 
 function applyPowerUp(player, powerType) {
+  if (!player.enabled) {
+    return;
+  }
   if (powerType === "fire") {
     player.fireLevel = Math.min(5, player.fireLevel + 1);
     flashMessage(`${player.label} 火力提升到 Lv.${player.fireLevel}`);
@@ -840,12 +1311,39 @@ function destroyEnemy(enemy, ownerId) {
   state.clears += 1;
   addScore(enemy.score);
   const owner = players.find((player) => player.id === ownerId);
-  if (owner) {
+  if (owner && owner.enabled) {
     owner.kills += 1;
+    grantSkillCharge(owner, enemy.isBoss ? 40 : 8 + enemy.score * 0.018);
   }
 
-  spawnExplosion(enemy.x, enemy.y, enemy.color, enemy.type === "ace" ? 28 : enemy.type === "bomber" ? 24 : 16);
+  for (const player of players) {
+    if (player.enabled && player.id !== ownerId) {
+      grantSkillCharge(player, enemy.isBoss ? 15 : 3 + enemy.score * 0.006);
+    }
+  }
+
+  spawnExplosion(
+    enemy.x,
+    enemy.y,
+    enemy.color,
+    enemy.isBoss ? 36 : enemy.type === "ace" ? 28 : enemy.type === "bomber" ? 24 : 16
+  );
   spawnFloatingText(`+${enemy.score}`, enemy.x, enemy.y, enemy.color);
+
+  if (enemy.isBoss) {
+    clearEnemyBullets(999);
+    state.bossId = null;
+    state.bossKills += 1;
+    state.level += 1;
+    state.wave = 0;
+    flashMessage(`Boss 被击破，进入章节 ${state.level}`, 2.2);
+    for (let index = 0; index < 2; index += 1) {
+      spawnPowerUp(clamp(enemy.x + (index === 0 ? -34 : 34), 40, WORLD.width - 40), enemy.y + 20, "weapon");
+    }
+    spawnPowerUp(enemy.x, enemy.y + 4, "heal");
+    queueNextWave(2.5);
+    return;
+  }
 
   const guaranteedDrop = enemy.type === "ace" || enemy.type === "bomber";
   if (guaranteedDrop || Math.random() > 0.75) {
@@ -854,13 +1352,16 @@ function destroyEnemy(enemy, ownerId) {
 }
 
 function endGame() {
+  setGameActive(false);
   state.running = false;
   state.gameOver = true;
+  state.bossId = null;
   setOverlay(true, {
-    kicker: "编队失联",
-    title: "双人任务结束",
-    text: `本局总分 ${state.score}，击坠 ${state.clears} 架敌机，最高分 ${state.highScore}。按空格或点击按钮重新出击。`,
-    buttonText: "重新出击",
+    kicker: state.mode === "single" ? "单机返航" : "编队失联",
+    title: state.mode === "single" ? "单人任务结束" : "双人任务结束",
+    text: `本局总分 ${state.score}，击坠 ${state.clears} 架敌机，最高分 ${state.highScore}。你可以切换模式后重新出击。`,
+    buttonText: state.mode === "single" ? "重新开始单人" : "重新开始双人",
+    showModePicker: true,
   });
 }
 
@@ -875,6 +1376,7 @@ function pauseGame() {
     title: "编队待命中",
     text: "按 P 键继续推进，或点击按钮立刻回到战场。",
     buttonText: "继续战斗",
+    showModePicker: false,
   });
 }
 
@@ -885,8 +1387,16 @@ function clampPlayer(player) {
 
 function updatePlayers(delta) {
   for (const player of players) {
+    if (!player.enabled) {
+      continue;
+    }
+
     if (player.hitCooldown > 0) {
       player.hitCooldown -= delta;
+    }
+
+    if (state.running && player.alive) {
+      grantSkillCharge(player, delta * 3.4);
     }
 
     if (!player.alive) {
@@ -910,10 +1420,20 @@ function updatePlayers(delta) {
     player.y += vertical * player.speed * delta;
     clampPlayer(player);
 
+    if (player.skillActive > 0) {
+      player.skillActive -= delta;
+      player.skillPulse -= delta;
+      if (player.skillPulse <= 0) {
+        triggerSkillPulse(player);
+        player.skillPulse = player.id === "p1" ? 0.15 : 0.2;
+      }
+    }
+
     player.cooldown -= delta;
     if (player.cooldown <= 0) {
       WEAPONS[player.weaponType].fire(player);
-      player.cooldown = WEAPONS[player.weaponType].rate(player.fireLevel);
+      player.cooldown =
+        WEAPONS[player.weaponType].rate(player.fireLevel) * (player.skillActive > 0 ? 0.55 : 1);
     }
   }
 }
@@ -983,14 +1503,9 @@ function updateEnemyBullets(delta) {
 }
 
 function updateEnemies(delta) {
-  state.enemySpawn -= delta;
-  const nextSpawn = Math.max(0.26, 0.92 - state.level * 0.052) + Math.random() * 0.34;
-  if (state.enemySpawn <= 0) {
-    spawnEnemyWave();
-    state.enemySpawn = nextSpawn;
-  }
+  updateEncounter(delta);
 
-  state.powerSpawn -= delta;
+  state.powerSpawn -= delta * (state.encounterPhase === "boss" ? 0.7 : 1);
   if (state.powerSpawn <= 0) {
     spawnPowerUp(randomRange(60, WORLD.width - 60), -20);
     state.powerSpawn = 10 + Math.random() * 6;
@@ -1026,15 +1541,43 @@ function updateEnemies(delta) {
     } else if (enemy.type === "ace") {
       enemy.y += enemy.y < 165 ? enemy.speed * delta : enemy.speed * 0.38 * delta;
       enemy.x += Math.sin(enemy.phase * 1.55) * enemy.drift * 0.72 * delta;
+    } else if (enemy.isBoss) {
+      enemy.phaseClock += delta * 1.1;
+      if (enemy.y < enemy.hoverY) {
+        enemy.y += enemy.speed * delta;
+      } else {
+        enemy.x += enemy.dashDir * 82 * delta;
+        enemy.y = enemy.hoverY + Math.sin(enemy.phaseClock) * 14;
+        if (enemy.x < 100 || enemy.x > WORLD.width - 100) {
+          enemy.dashDir *= -1;
+        }
+      }
     }
 
     enemy.x = clamp(enemy.x, enemy.width / 2 - 10, WORLD.width - enemy.width / 2 + 10);
 
     if (enemy.shooter) {
       enemy.shootTimer -= delta;
-      if (enemy.shootTimer <= 0) {
-        fireEnemyWeapon(enemy);
-        enemy.shootTimer = getEnemyCooldown(enemy.type);
+        if (enemy.shootTimer <= 0) {
+          if (enemy.isBoss) {
+            fireBossWeapon(enemy);
+            enemy.shootTimer = Math.max(0.48, 1.12 - enemy.bossPhase * 0.14);
+          } else {
+            fireEnemyWeapon(enemy);
+            enemy.shootTimer = getEnemyCooldown(enemy.type);
+        }
+      }
+    }
+
+    if (enemy.isBoss) {
+      enemy.summonTimer -= delta;
+      if (enemy.summonTimer <= 0) {
+        spawnBossEscort(
+          enemy,
+          enemy.bossPhase >= 2 ? "interceptor" : "striker",
+          enemy.bossPhase >= 3 ? 3 : 2
+        );
+        enemy.summonTimer = Math.max(4.4, 7.6 - enemy.bossPhase * 0.8);
       }
     }
 
@@ -1049,7 +1592,7 @@ function updatePowerUps(delta) {
     power.x += Math.sin(power.bob) * 26 * delta;
 
     for (const player of players) {
-      if (!player.alive) {
+      if (!player.enabled || !player.alive) {
         continue;
       }
 
@@ -1103,7 +1646,6 @@ function handleCollisions() {
       }
 
       bullet.hitIds.add(enemy.id);
-      enemy.hp -= bullet.damage;
       bullet.pierce -= 1;
       spawnExplosion(bullet.x, bullet.y, bullet.color, bullet.kind === "laser" ? 3 : 5);
 
@@ -1111,9 +1653,7 @@ function handleCollisions() {
         spawnExplosion(bullet.x, bullet.y, "#ffcf7a", 8);
       }
 
-      if (enemy.hp <= 0) {
-        destroyEnemy(enemy, bullet.ownerId);
-      }
+      damageEnemy(enemy, bullet.damage, bullet.ownerId);
 
       if (bullet.pierce <= 0) {
         bullet.hit = true;
@@ -1128,7 +1668,7 @@ function handleCollisions() {
 
   for (const bullet of enemyBullets) {
     for (const player of players) {
-      if (!player.alive || !collidesCircleRect(bullet, player)) {
+      if (!player.enabled || !player.alive || !collidesCircleRect(bullet, player)) {
         continue;
       }
       bullet.hit = true;
@@ -1141,11 +1681,15 @@ function handleCollisions() {
 
   for (const enemy of enemies) {
     for (const player of players) {
-      if (!player.alive || !intersects(enemy, player)) {
+      if (!player.enabled || !player.alive || !intersects(enemy, player)) {
         continue;
       }
-      enemy.dead = true;
-      spawnExplosion(enemy.x, enemy.y, enemy.color, enemy.type === "ace" ? 26 : 14);
+      if (!enemy.isBoss) {
+        enemy.dead = true;
+        spawnExplosion(enemy.x, enemy.y, enemy.color, enemy.type === "ace" ? 26 : 14);
+      } else {
+        spawnExplosion(player.x, player.y, enemy.color, 8);
+      }
       takeDamage(player);
       break;
     }
@@ -1185,6 +1729,28 @@ function update(delta) {
   updateHud();
 }
 
+function resolveSkillOwner(event) {
+  if (state.mode === "single" && event.key === "Shift") {
+    return players[0];
+  }
+
+  if (
+    players[0].skillKeys.includes(event.code) ||
+    (event.key === "Shift" && event.location === 1)
+  ) {
+    return players[0];
+  }
+
+  if (
+    players[1].enabled &&
+    (players[1].skillKeys.includes(event.code) || (event.key === "Shift" && event.location === 2))
+  ) {
+    return players[1];
+  }
+
+  return null;
+}
+
 function drawBackground() {
   const gradient = ctx.createLinearGradient(0, 0, 0, WORLD.height);
   gradient.addColorStop(0, "#071427");
@@ -1214,7 +1780,7 @@ function drawBackground() {
 }
 
 function drawPlayer(player) {
-  if (!player.alive) {
+  if (!player.enabled || !player.alive) {
     return;
   }
 
@@ -1230,6 +1796,14 @@ function drawPlayer(player) {
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(0, 0, 34 + player.shield * 3, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  if (player.skillActive > 0) {
+    ctx.strokeStyle = `${player.accent}`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 42 + Math.sin(performance.now() / 90) * 4, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -1269,7 +1843,23 @@ function drawEnemy(enemy) {
   ctx.translate(enemy.x, enemy.y);
   ctx.fillStyle = enemy.color;
 
-  if (enemy.type === "scout") {
+  if (enemy.isBoss) {
+    ctx.beginPath();
+    ctx.moveTo(0, 48);
+    ctx.lineTo(54, 18);
+    ctx.lineTo(72, -12);
+    ctx.lineTo(40, -38);
+    ctx.lineTo(0, -52);
+    ctx.lineTo(-40, -38);
+    ctx.lineTo(-72, -12);
+    ctx.lineTo(-54, 18);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ffe7d0";
+    ctx.fillRect(-18, -24, 36, 18);
+    ctx.fillRect(-58, -6, 22, 10);
+    ctx.fillRect(36, -6, 22, 10);
+  } else if (enemy.type === "scout") {
     ctx.beginPath();
     ctx.moveTo(0, 18);
     ctx.lineTo(14, -10);
@@ -1326,7 +1916,7 @@ function drawEnemy(enemy) {
   ctx.fillStyle = "rgba(255, 255, 255, 0.78)";
   ctx.fillRect(-5, -enemy.height / 2 + 12, 10, 12);
 
-  if (enemy.type !== "scout") {
+  if (enemy.type !== "scout" && !enemy.isBoss) {
     ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
     ctx.fillRect(-enemy.width / 2, enemy.height / 2 + 8, enemy.width, 4);
     ctx.fillStyle = "#7ef9ff";
@@ -1491,13 +2081,35 @@ function startOrResume() {
   }
 }
 
+ui.singleModeButton.addEventListener("click", () => {
+  if (!state.running || state.gameOver) {
+    setMode("single");
+  }
+});
+
+ui.coopModeButton.addEventListener("click", () => {
+  if (!state.running || state.gameOver) {
+    setMode("coop");
+  }
+});
+
 ui.primaryButton.addEventListener("click", startOrResume);
 
 window.addEventListener("keydown", (event) => {
   if (
-    ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD"].includes(
-      event.code
-    )
+    [
+      "Space",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "KeyW",
+      "KeyA",
+      "KeyS",
+      "KeyD",
+      "ShiftLeft",
+      "ShiftRight",
+    ].includes(event.code)
   ) {
     event.preventDefault();
   }
@@ -1513,6 +2125,16 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.repeat && event.key === "Shift") {
+    return;
+  }
+
+  const skillOwner = resolveSkillOwner(event);
+  if (skillOwner) {
+    activateSkill(skillOwner);
+    return;
+  }
+
   keys.add(event.code);
 });
 
@@ -1521,11 +2143,13 @@ window.addEventListener("keyup", (event) => {
 });
 
 initStars();
-updateHud();
+setMode("single");
+setGameActive(false);
 setOverlay(true, {
-  kicker: "双人出击",
-  title: "双机协同空战",
-  text: "P1 用 WASD，P2 用方向键，同时收集武器和补给，在越来越密集的敌军里把总分推高。",
-  buttonText: "开始任务",
+  kicker: "单人出击",
+  title: "单机突围战",
+  text: "使用 P1 独自推进波次和 Boss 战，按左 Shift 或任意 Shift 释放大招。",
+  buttonText: "开始单人任务",
+  showModePicker: true,
 });
 requestAnimationFrame(loop);
