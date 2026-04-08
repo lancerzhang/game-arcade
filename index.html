@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>星穹战机</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="scene-glow scene-glow-left"></div>
+    <div class="scene-glow scene-glow-right"></div>
+
+    <main class="app-shell">
+      <section class="hero-copy">
+        <p class="eyebrow">Classic Arcade</p>
+        <h1>星穹战机</h1>
+        <p class="hero-text">
+          现在是同屏双人合作版：两架战机同时升空，轮换多种武器，对抗更复杂的敌军编队，把总分一起推到更高。
+        </p>
+
+        <div class="info-card">
+          <h2>操作方式</h2>
+          <p>`P1` 使用 `WASD` 控制蓝翼号。</p>
+          <p>`P2` 使用方向键控制赤焰号。</p>
+          <p>`空格` 开始或重新开始，`P` 暂停。</p>
+        </div>
+
+        <div class="info-card">
+          <h2>武器仓</h2>
+          <p><span class="pill pill-weapon">脉冲</span> 标准高频主炮</p>
+          <p><span class="pill pill-weapon">散射</span> 扇形压制弹幕</p>
+          <p><span class="pill pill-weapon">激光</span> 高穿透直射束</p>
+          <p><span class="pill pill-weapon">追踪弹</span> 自动锁定敌机</p>
+          <p><span class="pill pill-weapon">电弧</span> 摆动清场弹群</p>
+        </div>
+
+        <div class="info-card">
+          <h2>补给与敌军</h2>
+          <p><span class="pill pill-fire">火力</span> 升级当前武器等级</p>
+          <p><span class="pill pill-shield">护盾</span> 抵挡一次伤害</p>
+          <p><span class="pill pill-heal">修复</span> 回复生命值</p>
+          <p><span class="pill pill-enemy">敌军</span> 侦察机、突击机、截击机、炮塔机、轰炸机、王牌机</p>
+        </div>
+      </section>
+
+      <section class="game-panel">
+        <div class="hud">
+          <div class="stat">
+            <span class="stat-label">总分</span>
+            <strong id="score">0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">阶段</span>
+            <strong id="level">1</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">击坠</span>
+            <strong id="clears">0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">最高分</span>
+            <strong id="highScore">0</strong>
+          </div>
+        </div>
+
+        <div class="pilot-grid">
+          <article class="pilot-card pilot-card-p1" id="p1Card">
+            <div class="pilot-head">
+              <span class="pilot-badge">P1</span>
+              <strong>蓝翼号</strong>
+            </div>
+            <p class="pilot-line">生命 <span id="p1Lives">3</span></p>
+            <p class="pilot-line">武器 <span id="p1Weapon">脉冲</span></p>
+            <p class="pilot-line">火力 <span id="p1Power">Lv.1</span></p>
+            <p class="pilot-line">护盾 <span id="p1Shield">0</span></p>
+            <p class="pilot-line">状态 <span id="p1Status">作战中</span></p>
+          </article>
+
+          <article class="pilot-card pilot-card-p2" id="p2Card">
+            <div class="pilot-head">
+              <span class="pilot-badge">P2</span>
+              <strong>赤焰号</strong>
+            </div>
+            <p class="pilot-line">生命 <span id="p2Lives">3</span></p>
+            <p class="pilot-line">武器 <span id="p2Weapon">散射</span></p>
+            <p class="pilot-line">火力 <span id="p2Power">Lv.1</span></p>
+            <p class="pilot-line">护盾 <span id="p2Shield">0</span></p>
+            <p class="pilot-line">状态 <span id="p2Status">作战中</span></p>
+          </article>
+        </div>
+
+        <div class="canvas-frame">
+          <canvas id="gameCanvas" width="480" height="800" aria-label="飞机大战游戏画布"></canvas>
+
+          <div class="overlay visible" id="overlay">
+            <div class="overlay-card">
+              <p class="overlay-kicker" id="overlayKicker">双人出击</p>
+              <h2 id="overlayTitle">双机协同空战</h2>
+              <p id="overlayText">
+                两位玩家同时推进战线，吃补给切武器、升火力，在越来越密集的敌军里活下来。
+              </p>
+              <button id="primaryButton" type="button">开始任务</button>
+            </div>
+          </div>
+
+          <div class="status-banner" id="statusBanner">双机编队已升空</div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./game.js"></script>
+  </body>
+</html>
